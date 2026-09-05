@@ -1,0 +1,24 @@
+{
+  "table_version": "2026-09-05",
+  "currency": "USD",
+  "note": "Per-million-token USD prices, input/output. Community snapshot; amounts shown in reports are estimates (~).",
+  "models": [
+    {"canonical": "gpt-5.5",  "aliases": ["gpt-5.5", "custom:gpt-5.5/gpt-5.5", "gpt-5.5/gpt-plus", "custom:gpt-5.5/gpt-plus"], "input": 1.25,  "output": 10.0},
+    {"canonical": "gpt-5.6",  "aliases": ["gpt-5.6", "gpt-5.6-sol"], "input": 1.25,  "output": 10.0},
+    {"canonical": "gpt-plus", "aliases": ["gpt-plus", "chat2api-bridge/gpt-plus", "custom:gpt-plus/gpt-5.5"], "input": 1.25, "output": 10.0},
+    {"canonical": "grok-4.5", "aliases": ["grok-4.5", "grok-4.5-build"], "input": 3.0, "output": 15.0},
+    {"canonical": "claude-opus",  "aliases": ["claude-opus", "claude-opus-4.1", "claude-opus-4"],  "input": 15.0, "output": 75.0},
+    {"canonical": "claude-sonnet", "aliases": ["claude-sonnet", "claude-sonnet-4.5", "claude-sonnet-4"], "input": 3.0, "output": 15.0},
+    {"canonical": "claude-haiku",  "aliases": ["claude-haiku", "claude-3-5-haiku"], "input": 0.8, "output": 4.0},
+    {"canonical": "deepseek-v4-pro",   "aliases": ["deepseek-v4-pro", "deepseek-reasoner"], "input": 0.55, "output": 2.19},
+    {"canonical": "deepseek-v4-flash", "aliases": ["deepseek-v4-flash", "deepseek-chat", "deepseek"], "input": 0.07, "output": 0.28},
+    {"canonical": "glm-5.3-flash", "aliases": ["glm-5.3-flash", "glm-5.3", "glm-4.5-flash"], "input": 0.0, "output": 0.0},
+    {"canonical": "glm-5.3",       "aliases": ["glm-5.3-pro"], "input": 0.6, "output": 2.2},
+    {"canonical": "qwen3.8-27b",   "aliases": ["qwen3.8:27b"], "input": 0.0, "output": 0.0},
+    {"canonical": "qwen3.6-35b",   "aliases": ["qwen3.6:35b"], "input": 0.0, "output": 0.0},
+    {"canonical": "qwen3.6-hermes-64k", "aliases": ["qwen3.6-hermes:64k"], "input": 0.0, "output": 0.0},
+    {"canonical": "kimi-k3",       "aliases": ["kimi-k3", "k3", "custom:kimi-k3"], "input": 0.6, "output": 2.5},
+    {"canonical": "gemini-2.5-pro", "aliases": ["gemini-2.5-pro", "gemini-pro"], "input": 1.25, "output": 10.0},
+    {"canonical": "gemini-2.5-flash", "aliases": ["gemini-2.5-flash", "gemini-flash"], "input": 0.30, "output": 2.5}
+  ]
+}
