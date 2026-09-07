@@ -306,5 +306,116 @@ class MemberCrudTests(ApiTestBase):
             self.assertFalse(hasattr(member_api, banned))
 
 
+class FinalAssignmentBlockerTests(ApiTestBase):
+    """S-1/D-2 targeted HTTP regressions only."""
+
+    def _device(self):
+        return self.register().json()
+
+    def _member(self, name="test-member"):
+        return self.create_member(name=name).json()["member_id"]
+
+    def _assign(self, device_id, member_id, valid_from=None):
+        payload = {"member_id": member_id, "reason": "test-reassignment"}
+        if valid_from is not None:
+            payload["valid_from"] = valid_from
+        return self.client.post(
+            f"/api/v1/devices/{device_id}/assignments", json=payload)
+
+    def test_backdated_live_reassignment_is_409_and_rolls_back(self):
+        import datetime as dt
+        device = self._device()
+        old_member = self._member("test-member-old")
+        new_member = self._member("test-member-new")
+        initial = (dt.datetime.now(dt.timezone.utc)
+                   - dt.timedelta(days=10)).isoformat()
+        backdated = (dt.datetime.now(dt.timezone.utc)
+                     - dt.timedelta(days=5)).isoformat()
+        self.assertEqual(
+            self._assign(device["device_id"], old_member,
+                         valid_from=initial).status_code,
+            201)
+
+        response = self._assign(device["device_id"], new_member,
+                                valid_from=backdated)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "assignment_conflict")
+        self.assertNotIn("sqlite", response.text.lower())
+        self.assertNotIn("traceback", response.text.lower())
+
+        db = split_db.connect(path=self.db_path)
+        rows = db.execute(
+            "SELECT member_id, valid_to FROM device_assignments "
+            "WHERE device_id=? ORDER BY valid_from",
+            (device["device_id"],)).fetchall()
+        db.close()
+        self.assertEqual(rows, [(old_member, None)])
+
+    def test_disabled_member_assignment_is_409_and_writes_nothing(self):
+        device = self._device()
+        member = self._member()
+        self.client.patch(f"/api/v1/members/{member}",
+                          json={"status": "disabled"})
+
+        response = self._assign(device["device_id"], member)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "assignment_conflict")
+        self.assertNotIn("traceback", response.text.lower())
+
+        db = split_db.connect(path=self.db_path)
+        count = db.execute(
+            "SELECT COUNT(*) FROM device_assignments WHERE device_id=?",
+            (device["device_id"],)).fetchone()[0]
+        db.close()
+        self.assertEqual(count, 0)
+
+    def test_current_time_reassignment_is_201_and_boundary_is_exact(self):
+        import datetime as dt
+        from costguard_split.services.device_registry import member_at
+
+        device = self._device()
+        old_member = self._member("test-member-old")
+        new_member = self._member("test-member-new")
+        initial = (dt.datetime.now(dt.timezone.utc)
+                   - dt.timedelta(days=1)).isoformat()
+        self.assertEqual(
+            self._assign(device["device_id"], old_member,
+                         valid_from=initial).status_code,
+            201)
+
+        # No explicit valid_from: one canonical server_now must be reused.
+        response = self._assign(device["device_id"], new_member)
+        self.assertEqual(response.status_code, 201)
+        new_assignment = response.json()
+
+        db = split_db.connect(path=self.db_path)
+        rows = db.execute(
+            "SELECT member_id, valid_from, valid_to FROM device_assignments "
+            "WHERE device_id=? ORDER BY valid_from",
+            (device["device_id"],)).fetchall()
+        at_boundary = member_at(
+            db, device_id=device["device_id"],
+            at=new_assignment["valid_from"])
+        db.close()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0][0], old_member)
+        self.assertEqual(rows[0][2], rows[1][1])
+        self.assertEqual(rows[1][0], new_member)
+        self.assertIsNone(rows[1][2])
+        self.assertEqual(at_boundary, new_member)  # [start,end)
+
+    def test_invalid_or_conflicting_timestamp_is_409_not_500(self):
+        device = self._device()
+        old_member = self._member("test-member-old")
+        new_member = self._member("test-member-new")
+        self.assertEqual(
+            self._assign(device["device_id"], old_member).status_code,
+            201)
+        response = self._assign(device["device_id"], new_member,
+                                valid_from="not-a-timestamp")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "assignment_conflict")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

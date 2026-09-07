@@ -38,8 +38,17 @@ class AssignmentConflict(Exception):
     live assignment) -> HTTP 409."""
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def _now() -> datetime:
+    """Return one timezone-aware canonical UTC server instant."""
+    return datetime.now(timezone.utc)
+
+
+def _parse_utc(value: str) -> datetime:
+    """Parse an ISO timestamp and normalize it to an aware UTC datetime."""
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("valid_from must include a timezone offset")
+    return parsed.astimezone(timezone.utc)
 
 
 def create_assignment_api(db, *, context: ServerContext, device_id: str,
@@ -47,7 +56,14 @@ def create_assignment_api(db, *, context: ServerContext, device_id: str,
                           reason: Optional[str] = None) -> dict:
     """Assign device -> member (manual, deterministic)."""
     org = context.organization_id
-    effective = valid_from or _now()
+    server_now = _now()
+    try:
+        effective_at = (_parse_utc(valid_from) if valid_from is not None
+                        else server_now)
+    except ValueError as exc:
+        raise AssignmentConflict("valid_from must be a timezone-aware ISO "
+                                 "timestamp") from exc
+    effective = effective_at.isoformat()
 
     # tenant gates (foreign ids are 404-hidden)
     assert_tenant(db, "devices", organization_id=org, row_id=device_id)
@@ -57,7 +73,7 @@ def create_assignment_api(db, *, context: ServerContext, device_id: str,
             "member is disabled and cannot receive a new assignment")
 
     has_open = current_member(db, device_id) is not None
-    if has_open and effective < _now():
+    if has_open and effective_at < server_now:
         raise AssignmentConflict(
             "backdated reassignment of a live assignment is not allowed "
             "through this endpoint (attribution rewrite); pass a current "

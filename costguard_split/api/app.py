@@ -23,6 +23,7 @@ from ..schemas.dto import canonical_source_event_id  # re-export used by tests
 from . import assignments as assignment_service
 from . import members as member_service
 from . import registration as device_service
+from .assignments import AssignmentConflict
 from .context import ServerContext, TenantViolation
 from .schemas import (
     AssignmentCreateRequest, AssignmentResponse,
@@ -133,14 +134,14 @@ def create_app(db_path=None, context: ServerContext | None = None) -> FastAPI:
                 valid_from=payload.valid_from, reason=payload.reason)
         except TenantViolation:
             raise HTTPException(status_code=404, detail="not found")
-        except member_service.AssignmentConflict as exc:
-            raise HTTPException(status_code=409, detail={
-                "error": "assignment_conflict", "message": str(exc)})
+        except AssignmentConflict:
+            # Preserve the single domain exception type for the unified
+            # top-level 409 handler below.
+            raise
 
     app.include_router(router)
 
     # unified error shapes, never leak tracebacks
-    from .assignments import AssignmentConflict
     from .registration import RegistrationConflict as _RegConflict
 
     @app.exception_handler(_RegConflict)
