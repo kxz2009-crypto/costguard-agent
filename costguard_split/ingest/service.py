@@ -18,6 +18,7 @@ from ..schemas.dto import canonical_source_event_id
 from ..schemas.usage import UsageEventClaim
 from ..services import audit
 from ..services.device_registry import member_at
+from .pricing_public import estimate_cost
 
 
 class IngestConflict(ValueError):
@@ -158,6 +159,13 @@ def ingest_usage_event(db, *, context: ServerContext,
         device_id = device[0]
         member_id = member_at(db, device_id=device_id, at=started_at)
 
+        # P1A-09: optional public price estimation, CREATED path only.
+        # Default OFF -> (None, None); duplicates/rejections never reach
+        # this recompute and stored money is never mutated afterwards.
+        # estimate_cost is fail-open to (None, None) on any table/price
+        # problem and never raises.
+        pricing_version, api_cost = estimate_cost(claim)
+
         candidate = UsageEvent(
             id=event_id,
             organization_id=org,
@@ -178,8 +186,8 @@ def ingest_usage_event(db, *, context: ServerContext,
             output_tokens=claim.output_tokens,
             reasoning_tokens=claim.reasoning_tokens,
             request_count=claim.request_count,
-            pricing_version=None,
-            api_equivalent_cost_usd=None,
+            pricing_version=pricing_version,
+            api_equivalent_cost_usd=api_cost,
             source_type=claim.source_type,
             collector_version=claim.collector_version,
             created_at=now,
