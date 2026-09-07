@@ -782,18 +782,20 @@ class DtoTests(unittest.TestCase):
         dto.assert_dto_never_carries_raw(clean)      # no raise
 
     def test_usage_claim_contract(self):
+        from pydantic import ValidationError
+
         claim = dto.UsageEventClaim(
             device_uid=duid.new_device_uid(), provider="codex",
             source_event_id="evt-123", model="gpt-5.5",
             started_at=T0, ended_at=T0, session_ref="sess-1",
             input_tokens=10, output_tokens=5)
-        self.assertEqual(claim.validate(), [])
-        # float tokens rejected at the boundary (PATCH 9)
-        bad = dto.UsageEventClaim(
-            device_uid=duid.new_device_uid(), provider="codex",
-            source_event_id="e", model="m", started_at=T0, ended_at=T0,
-            session_ref="s", input_tokens=1.5)
-        self.assertTrue(any("input_tokens" in e for e in bad.validate()))
+        self.assertEqual(claim.input_tokens, 10)
+        # P1A-02 validates at the Pydantic construction boundary.
+        with self.assertRaises(ValidationError):
+            dto.UsageEventClaim(
+                device_uid=duid.new_device_uid(), provider="codex",
+                source_event_id="e", model="m", started_at=T0, ended_at=T0,
+                session_ref="s", input_tokens=1.5)
         # canonical event id replaces (source, session_ref, timestamp)
         self.assertEqual(
             dto.canonical_source_event_id("Codex", "evt 9"),

@@ -28,8 +28,12 @@ collector-derived-unique; helper below normalizes it.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
+
+# P1A-02 canonical Pydantic boundary. Re-exported here so P0 import paths
+# remain valid while all new code imports costguard_split.schemas.usage.
+from .usage import UsageEventClaim
 
 # ---------------------------------------------------------------------------
 # Safe evidence DTO (LOCAL-ONLY raw values never leave the device):
@@ -92,48 +96,9 @@ def assert_dto_never_carries_raw(payload: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# P1 usage-event claim (contract only — no ingestion in P0)
+# P1 usage-event claim helpers. UsageEventClaim is imported above from the
+# canonical Pydantic boundary module; this file retains the legacy import path.
 # ---------------------------------------------------------------------------
-
-_TOKEN_FIELDS = ("input_tokens", "cached_input_tokens",
-                 "cache_write_tokens", "output_tokens", "reasoning_tokens")
-
-
-@dataclass
-class UsageEventClaim:
-    """What a collector may CLAIM about one usage event (P1 wire shape).
-
-    Money fields are deliberately ABSENT: api_equivalent_cost_usd is a
-    server determination (Decimal / NUMERIC(12,4) later). Token counters
-    are ints — floats are rejected here already (PATCH 9 spirit).
-    """
-    device_uid: str
-    provider: str
-    source_event_id: str
-    model: str
-    started_at: str
-    ended_at: str
-    session_ref: str
-    input_tokens: int = 0
-    cached_input_tokens: int = 0
-    cache_write_tokens: int = 0
-    output_tokens: int = 0
-    reasoning_tokens: int = 0
-    request_count: int = 1
-
-    def validate(self) -> list[str]:
-        errors = []
-        from ..identity.device_uid import validate_device_uid
-        if not validate_device_uid(self.device_uid):
-            errors.append("device_uid malformed")
-        if not self.source_event_id:
-            errors.append("source_event_id required (idempotency key)")
-        for name in _TOKEN_FIELDS + ("request_count",):
-            value = getattr(self, name)
-            if not isinstance(value, int) or isinstance(value, bool) \
-                    or value < 0:
-                errors.append(f"{name} must be a non-negative int")
-        return errors
 
 
 def canonical_source_event_id(provider: str, native_id: str) -> str:
