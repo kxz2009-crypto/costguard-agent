@@ -161,9 +161,9 @@ class DeviceRegistrationTests(ApiTestBase):
         self.assertEqual(r.status_code, 422)
 
     def test_10_raw_ip_rejected(self):
-        r = self.register(ip="1.2.3.4")
+        r = self.register(ip="203.0.113.9")
         self.assertEqual(r.status_code, 422)
-        r = self.register(raw_ip="1.2.3.4")
+        r = self.register(raw_ip="203.0.113.9")
         self.assertEqual(r.status_code, 422)
 
     def test_11_malformed_device_uid_rejected(self):
@@ -210,7 +210,7 @@ class DeviceRegistrationTests(ApiTestBase):
         evil = dict(EVIDENCE, organization_id="other-org",
                     member_id="mem_target", identity_confidence=100,
                     api_equivalent_cost=999999,
-                    hostname="real-host", username="admin", ip="1.2.3.4")
+                    hostname="real-host", username="admin", ip="203.0.113.9")
         r = self.register(**{k: v for k, v in evil.items()
                              if k not in EVIDENCE})
         self.assertEqual(r.status_code, 422)
