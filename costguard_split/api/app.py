@@ -25,6 +25,7 @@ from . import members as member_service
 from . import registration as device_service
 from . import usage as usage_routes
 from . import visualization as visualization_routes
+from . import trend_visualization as trend_visualization_routes
 from .assignments import AssignmentConflict
 from .context import ServerContext, TenantViolation
 from .schemas import (
@@ -148,6 +149,14 @@ def create_app(db_path=None, context: ServerContext | None = None) -> FastAPI:
 
     # P1B-03 visualization HTTP adapter
     visualization_routes.add_visualization_routes(
+        app,
+        router,
+        db,
+        ctx,
+    )
+
+    # P1C-02 trend visualization HTTP adapter
+    trend_visualization_routes.add_trend_visualization_routes(
         app,
         router,
         db,
