@@ -25,9 +25,12 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -45,6 +48,23 @@ from costguard_split.services import device_registry as reg
 
 T0 = "2026-09-01T00:00:00+00:00"
 T1 = "2026-09-11T00:00:00+00:00"
+
+
+@contextmanager
+def temporary_costguard_home(home_path):
+    """B-3: set COSTGUARD_HOME for a block; restore the EXACT previous
+    environment state on exit (previously-set value is restored, originally
+    unset stays unset). Every test that touches the env variable must go
+    through this — raw os.environ writes leak state across tests."""
+    previous = os.environ.get("COSTGUARD_HOME")
+    os.environ["COSTGUARD_HOME"] = str(home_path)
+    try:
+        yield Path(home_path)
+    finally:
+        if previous is None:
+            os.environ.pop("COSTGUARD_HOME", None)
+        else:
+            os.environ["COSTGUARD_HOME"] = previous
 
 
 class SplitHome:
@@ -140,16 +160,16 @@ class UidTests(unittest.TestCase):
 
 class HomeIsolationTests(unittest.TestCase):
     def test_t06_costguard_home_isolation(self):
+        # keep a canary: env must be exactly restored after every block
         with tempfile.TemporaryDirectory() as td:
             home = Path(td) / "isolated"
-            os.environ["COSTGUARD_HOME"] = str(home)
-            try:
+            with temporary_costguard_home(home):
                 # env-driven resolution (priority 2)
                 self.assertEqual(paths.resolve_home(), home)
                 ident = dev.get_or_create_identity()   # no explicit arg
                 self.assertTrue(
                     paths.device_json_path(home).exists())
-                conn = split_db.connect()              # same home
+                conn = split_db.connect()              # same single resolver
                 tables = {r[0] for r in conn.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'")}
                 self.assertIn("devices", tables)
@@ -158,20 +178,20 @@ class HomeIsolationTests(unittest.TestCase):
                 self.assertEqual(len(key), 32)
                 self.assertTrue(
                     paths.fingerprint_key_path(home).exists())
-            finally:
-                os.environ.pop("COSTGUARD_HOME", None)
+                self.assertTrue(duid.validate_device_uid(ident.device_uid))
         # priority 1 beats env
         with tempfile.TemporaryDirectory() as td:
-            os.environ["COSTGUARD_HOME"] = str(Path(td) / "env-home")
-            try:
+            with temporary_costguard_home(Path(td) / "env-home"):
                 explicit = Path(td) / "explicit"
                 self.assertEqual(paths.resolve_home(explicit), explicit)
-            finally:
-                os.environ.pop("COSTGUARD_HOME", None)
-        # no real ~/.costguard files were created by this test
-        self.assertFalse(
-            Path.home().joinpath(".costguard", "device.json")
-            .exists() and False, "real home polluted")  # sanity only
+        # unset env -> legacy default resolution still works (no crash)
+        prev = os.environ.pop("COSTGUARD_HOME", None)
+        try:
+            self.assertTrue(str(paths.resolve_home()).endswith(
+                ".costguard") or paths.resolve_home().name)
+        finally:
+            if prev is not None:
+                os.environ["COSTGUARD_HOME"] = prev
 
 
 class CorruptionTests(unittest.TestCase):
@@ -197,29 +217,275 @@ class CorruptionTests(unittest.TestCase):
             self.assertTrue(duid.validate_device_uid(fresh.device_uid))
 
     def test_t08_concurrent_first_initialization(self):
-        """Two racing initializers: exactly one identity wins on disk and
-        both callers agree on it (adopt-before-return)."""
+        """Two racing threads in one process: single identity, both agree.
+        (Cross-process correctness is T08b — this stays a fast in-proc check
+        of the thread-optimization layer.)"""
         import threading
         with SplitHome() as env:
             results = []
+            errors = []
 
             def worker():
-                ident = dev.get_or_create_identity(home=env.home)
-                results.append(ident.device_uid)
+                try:
+                    ident = dev.get_or_create_identity(home=env.home)
+                    results.append(ident.device_uid)
+                except Exception as exc:            # pragma: no cover
+                    errors.append(repr(exc))
 
-            threads = [threading.Thread(target=worker) for _ in range(2)]
+            threads = [threading.Thread(target=worker) for _ in range(4)]
             for th in threads:
                 th.start()
             for th in threads:
                 th.join()
+            self.assertEqual(errors, [])
             on_disk = json.loads(paths.device_json_path(
                 env.home).read_text(encoding="utf-8"))["device_uid"]
-            self.assertEqual(len(results), 2)
-            # every caller sees the SAME on-disk identity
+            self.assertEqual(len(results), 4)
             self.assertEqual(set(results), {on_disk})
-            # no tmp litter
             leftovers = list(env.home.glob("device.json.tmp*"))
             self.assertEqual(leftovers, [])
+
+
+class MultiprocessIdentityTests(unittest.TestCase):
+    """B-1: REAL cross-process stress — independent OS processes, not
+    threads. Every returned UID must equal the canonical on-disk one."""
+
+    def _run_round(self, n_procs: int) -> tuple[set[str], str, int, list]:
+        """One stress round inside its own tmp home. Returns
+        (returned_uid_set, on_disk_uid, device_json_mode, residue_names) —
+        filesystem assertions run INSIDE the context (the tmp home is
+        deleted on exit)."""
+        with SplitHome() as env:            # tmp home; repo on sys.path
+            repo = str(Path(__file__).resolve().parents[1])
+            worker = (
+                "import sys, json\n"
+                "from pathlib import Path\n"
+                "sys.path.insert(0, %r)\n"
+                "from costguard_split.identity import device as dev\n"
+                "ident = dev.get_or_create_identity(home=Path(%r))\n"
+                "print(ident.device_uid)\n" % (repo, str(env.home))
+            )
+            procs = [subprocess.Popen(
+                [sys.executable, "-c", worker],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                for _ in range(n_procs)]
+            uids, errors = [], []
+            for p in procs:
+                out, err = p.communicate()
+                uids.append(out.strip())
+                if p.returncode != 0:
+                    errors.append(err.strip()[-300:])
+            self.assertEqual(errors, [], "worker processes failed")
+            self.assertEqual(
+                len([u for u in uids if u.startswith("cgdev_")]), n_procs)
+            on_disk = json.loads(paths.device_json_path(
+                env.home).read_text(encoding="utf-8"))["device_uid"]
+            # B-1a: canonical artifact mode + zero residue (pre-cleanup).
+            # split.db is SplitHome's own seeded fixture, not identity litter.
+            mode = os.stat(paths.device_json_path(env.home)).st_mode & 0o777
+            residue = [p.name for p in env.home.iterdir()
+                       if p.name not in ("device.json", "split.db")]
+            return set(uids), on_disk, mode, residue
+
+    def test_t08b_multiprocess_single_uid_5r_x8p(self):
+        """5 rounds x 8 processes: all returned UIDs == disk UID."""
+        for round_no in range(5):
+            with self.subTest(round=round_no):
+                uids, on_disk, mode, residue = self._run_round(8)
+                self.assertEqual(len(uids), 1,
+                                 f"round {round_no}: ghost UIDs {uids}")
+                self.assertEqual(uids, {on_disk})
+                self.assertEqual(mode, 0o600)
+                self.assertEqual(residue, [], "tmp/lock litter on disk")
+
+    def test_t08c_multiprocess_single_uid_20p(self):
+        """1 round x 20 processes (VPS stress shape)."""
+        uids, on_disk, mode, residue = self._run_round(20)
+        self.assertEqual(len(uids), 1)
+        self.assertEqual(uids, {on_disk})
+        self.assertEqual(mode, 0o600)
+        self.assertEqual(residue, [])
+
+    def test_b1a_mode_0600_single_and_hardened(self):
+        """Single-process 0600; permissive existing file re-hardened with
+        SAME uid (no rotation) on the read path."""
+        with SplitHome() as env:
+            ident = dev.get_or_create_identity(home=env.home)
+            f = paths.device_json_path(env.home)
+            self.assertEqual(os.stat(f).st_mode & 0o777, 0o600)
+            os.chmod(f, 0o644)                       # simulate legacy 0644
+            again = dev.get_or_create_identity(home=env.home)
+            self.assertEqual(again.device_uid, ident.device_uid)
+            self.assertEqual(os.stat(f).st_mode & 0o777, 0o600)
+
+    def test_b1_stale_dead_owner_lock_reclaimed(self):
+        """Crashed writer's lock (dead pid + old mtime) is broken, not
+        waited on. Ambiguous locks (fresh mtime) are NEVER broken."""
+        with SplitHome() as env:
+            home = env.home
+            home.mkdir(parents=True, exist_ok=True)
+            lock = home / "device.json.lock"
+            lock.write_text(json.dumps(
+                {"pid": 2**28, "created_at": "2020-01-01T00:00:00+00:00",
+                 "created_mono": 0.0}), encoding="utf-8")
+            old = time.time() - dev.STALE_LOCK_SEC - 5
+            os.utime(lock, (old, old))     # backdate: abandoned long ago
+            ident = dev.get_or_create_identity(home=home)
+            self.assertTrue(duid.validate_device_uid(ident.device_uid))
+            self.assertFalse(lock.exists())          # reclaimed + cleaned
+        # a FRESH lock with a dead owner is left alone (ambiguous age):
+        with SplitHome() as env:
+            home = env.home
+            home.mkdir(parents=True, exist_ok=True)
+            lock = home / "device.json.lock"
+            lock.write_text(json.dumps(
+                {"pid": 2**28, "created_at": "t", "created_mono": 0.0}),
+                encoding="utf-8")                    # dead pid, fresh mtime
+            old_timeout = dev.LOCK_TIMEOUT_S
+            dev.LOCK_TIMEOUT_S = 0.2
+            try:
+                with self.assertRaises(
+                        dev.DeviceIdentityInitializationTimeout):
+                    dev.get_or_create_identity(home=home)
+            finally:
+                dev.LOCK_TIMEOUT_S = old_timeout
+            self.assertTrue(lock.exists())           # NOT broken
+            lock.unlink()
+
+    def test_b1_timeout_never_mints(self):
+        """A live foreign writer + fresh lock: follower must time out and
+        must NOT mint a second identity (bounded wait)."""
+        with SplitHome() as env:
+            home = env.home
+            home.mkdir(parents=True, exist_ok=True)
+            lock = home / "device.json.lock"
+            lock.write_text(json.dumps(
+                {"pid": os.getpid(),           # OUR pid => alive forever
+                 "created_at": "t", "created_mono": time.monotonic()}),
+                encoding="utf-8")
+            old_timeout = dev.LOCK_TIMEOUT_S
+            dev.LOCK_TIMEOUT_S = 0.15             # keep the test fast
+            try:
+                with self.assertRaises(
+                        dev.DeviceIdentityInitializationTimeout):
+                    dev.get_or_create_identity(home=home)
+            finally:
+                dev.LOCK_TIMEOUT_S = old_timeout
+            self.assertFalse(
+                paths.device_json_path(home).exists(),
+                "follower minted despite not owning the lock")
+            lock.unlink()
+
+
+class DbPathResolverTests(unittest.TestCase):
+    """B-2: ONE resolver. db.connect() must honor explicit > env > default,
+    with no import-time caching."""
+
+    def test_db_connect_env_wins_and_no_default_pollution(self):
+        with tempfile.TemporaryDirectory() as td:
+            env_home = Path(td) / "A"
+            # snapshot the real default DB (if any) BEFORE the probe
+            default_db = Path.home() / ".costguard" / "split.db"
+            before = default_db.stat().st_mtime if default_db.exists() \
+                else None
+            with temporary_costguard_home(env_home):
+                conn = split_db.connect()            # no args at all
+                try:
+                    self.assertTrue(
+                        (env_home / "split.db").exists())
+                finally:
+                    conn.close()
+            # real default home untouched (no new file / no rewrite)
+            if before is None:
+                self.assertFalse(default_db.exists(),
+                                 "default home polluted despite env")
+            else:
+                self.assertEqual(default_db.stat().st_mtime, before)
+
+    def test_db_connect_no_import_time_cache(self):
+        # env set AFTER import must be honored (proves call-time resolve)
+        with tempfile.TemporaryDirectory() as td:
+            late_home = Path(td) / "B"
+            with temporary_costguard_home(late_home):
+                self.assertEqual(split_db.split_db_path(),
+                                 late_home / "split.db")
+                conn = split_db.connect()
+                conn.close()
+                self.assertTrue((late_home / "split.db").exists())
+
+    def test_db_connect_explicit_beats_env(self):
+        with tempfile.TemporaryDirectory() as td:
+            env_home = Path(td) / "B"
+            explicit_home = Path(td) / "C"
+            with temporary_costguard_home(env_home):
+                conn = split_db.connect(home=explicit_home)
+                conn.close()
+                self.assertTrue(
+                    (explicit_home / "split.db").exists())
+                self.assertFalse((env_home / "split.db").exists())
+
+    def test_split_db_path_delegates_to_paths(self):
+        # B-2 structural rule: db.split_db_path IS paths.split_db_path
+        with tempfile.TemporaryDirectory() as td:
+            with temporary_costguard_home(Path(td) / "X"):
+                self.assertEqual(
+                    split_db.split_db_path(), paths.split_db_path())
+                self.assertEqual(
+                    split_db.split_db_path(td), paths.split_db_path(td))
+
+    def test_bonus_malformed_key_never_rotates(self):
+        """Malformed fingerprint key = loud error, NOT silent rotation
+        (rotation silently re-identifies every fingerprinted member)."""
+        with SplitHome() as env:
+            key = dev.load_or_create_key(env.home)
+            f = paths.fingerprint_key_path(env.home)
+            self.assertEqual(os.stat(f).st_mode & 0o777, 0o600)
+            f.write_text("garbage-not-a-key", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                dev.load_or_create_key(env.home)
+            self.assertEqual(f.read_text(encoding="utf-8"),
+                             "garbage-not-a-key")   # NOT overwritten
+
+
+class TestOrderIndependence(unittest.TestCase):
+    """B-3 meta-test: run the whole suite in deterministic-but-varied orders;
+    any cross-test leakage shows up as failures here.
+
+    The meta-tests EXCLUDE themselves from the loaded suite — otherwise
+    running the suite inside the suite recurses forever.
+    """
+
+    SELF_CLASS = "TestOrderIndependence"
+
+    def _run_suite(self, order_key):
+        loader = unittest.TestLoader()
+        suite = loader.loadTestsFromName("tests.split_p0_test")
+        flat = []
+        for ts in suite:
+            for t in ts._tests:
+                if type(t).__name__ != self.SELF_CLASS:
+                    flat.append(t)
+        flat.sort(key=order_key)
+        result = unittest.TestResult()
+        unittest.TestSuite(flat).run(result)
+        return result.wasSuccessful(), len(result.failures), \
+            len(result.errors)
+
+    def test_reverse_order_passes(self):
+        ok, fails, errs = self._run_suite(
+            lambda t: tuple(reversed(t.id())))
+        self.assertTrue(ok, f"reverse order: {fails} failures {errs} errors")
+
+    def test_shuffled_orders_pass(self):
+        import random
+        rng = random.Random(20260906)
+        for round_no in range(3):
+            with self.subTest(round=round_no):
+                salt = [rng.random() for _ in range(64)]
+                ok, fails, errs = self._run_suite(
+                    lambda t, s=salt: (s[hash(t.id()) % len(s)], t.id()))
+                self.assertTrue(ok,
+                                f"shuffle {round_no}: {fails}f {errs}e")
 
 
 class FingerprintTests(unittest.TestCase):

@@ -1,10 +1,11 @@
-"""Split DB connection — separate file, same local data directory.
+"""Split DB connection — <resolved CostGuard home>/split.db, 0600, migrations.
 
-Reuses costguard_agent's storage-location convention WITHOUT hardcoding a
-path: database.CG_DIR is read at call time (module attribute), so tests can
-patch it exactly the way existing CostGuard tests do. Split keeps its own
-SQLite file (split.db) so Agent and Split schemas never collide and either
-can move to PostgreSQL independently later.
+B-2 (single path authority): ALL path resolution lives in
+costguard_split.paths. This module keeps no second directory logic —
+split_db_path() delegates to paths.split_db_path(), which honors:
+    explicit home arg  >  COSTGUARD_HOME  >  legacy ~/.costguard
+call-time (no import-time caching), so tests and multi-home tooling can
+retarget the database freely without touching the real user home.
 """
 
 from __future__ import annotations
@@ -13,20 +14,25 @@ import os
 import sqlite3
 from pathlib import Path
 
-from ._compat import agent_database  # lazy agent import, see below
+from . import paths
 from .schemas.tables import apply_migrations
 
-SPLIT_DB_NAME = "split.db"
+SPLIT_DB_NAME = "split.db"      # re-exported for callers that only need the name
 
 
-def split_db_path() -> Path:
-    """Resolve <agent data dir>/split.db at call time (no hardcode)."""
-    return agent_database().CG_DIR / SPLIT_DB_NAME
+def split_db_path(home: Path | str | None = None) -> Path:
+    """Delegate to the single resolver (paths.split_db_path)."""
+    return paths.split_db_path(home)
 
 
-def connect(path: Path | None = None) -> sqlite3.Connection:
-    """Open (creating if needed) the Split DB with 0600 perms + migrations."""
-    p = Path(path) if path else split_db_path()
+def connect(path: Path | str | None = None,
+            home: Path | str | None = None) -> sqlite3.Connection:
+    """Open (creating if needed) the Split DB with 0600 perms + migrations.
+
+    Precedence: explicit `path` beats everything; otherwise the DB lives at
+    split_db_path(home) under the one resolved CostGuard home.
+    """
+    p = Path(path).expanduser() if path else split_db_path(home)
     p.parent.mkdir(parents=True, exist_ok=True)
     if not p.exists():
         p.touch(mode=0o600)

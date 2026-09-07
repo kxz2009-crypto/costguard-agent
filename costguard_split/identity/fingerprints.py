@@ -76,16 +76,46 @@ def new_fingerprint_key() -> bytes:
 
 
 def _load_or_create_key(key_path: Path) -> bytes:
-    """Deployment-local HMAC key (0600), created once."""
+    """Deployment-local HMAC key (0600), created once.
+
+    P1-NON-BLOCKING hardening (recorded, not expanded):
+    - created via O_CREAT|O_EXCL 0600 + atomic replace (umask-independent,
+      mirrors device.json discipline)
+    - an existing MALFORMED key file is NOT silently rotated: rotation
+      invalidates every fingerprint ever computed with the old key, which
+      silently re-identifies members. The caller gets a loud error and an
+      explicit recovery action instead (quarantine + replace by operator).
+      Full key-rotation protocol stays P1 (VPS review: NON-BLOCKING).
+    """
     key_path = Path(key_path)
     key_path.parent.mkdir(parents=True, exist_ok=True)
     if key_path.exists():
         raw = key_path.read_text(encoding="utf-8").strip()
         if re.fullmatch(r"[0-9a-f]{64}", raw):
-            return bytes.fromhex(raw)
-        # corrupt/foreign: replace, don't trust (same policy as device.py)
+            key = bytes.fromhex(raw)
+        else:
+            raise ValueError(
+                f"fingerprint key at {key_path} is malformed — refusing to "
+                f"rotate it automatically (rotation would silently re-"
+                f"identify all members ever fingerprinted with the old "
+                f"key). Recover explicitly: inspect the file, then quarantine"
+                f" (rename) or replace it by hand, and re-run.")
+        if (key_path.stat().st_mode & 0o777) != 0o600:
+            os.chmod(key_path, 0o600)
+        return key
     key = os.urandom(32)
-    key_path.write_text(key.hex() + "\n", encoding="utf-8")
+    import uuid as _uuid
+    tmp = key_path.with_name(
+        f"{key_path.name}.tmp.{os.getpid()}.{_uuid.uuid4().hex[:8]}")
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(key.hex() + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, key_path)
+    finally:
+        tmp.unlink(missing_ok=True)
     os.chmod(key_path, 0o600)
     return key
 
