@@ -78,3 +78,18 @@ class ConnectorRegistry:
     def providers(self) -> tuple[str, ...]:
         """All registered provider keys, sorted."""
         return tuple(sorted(self._connectors))
+
+
+def default_registry() -> ConnectorRegistry:
+    """Registry pre-populated with the P1A-05 local provider connectors.
+
+    Registration is explicit and import-time deterministic; there is no
+    auto-discovery, network probing, or dynamic download of providers.
+    """
+    from .claude import ClaudeConnector
+    from .codex import CodexConnector
+
+    registry = ConnectorRegistry()
+    registry.register(ClaudeConnector.name, ClaudeConnector)
+    registry.register(CodexConnector.name, CodexConnector)
+    return registry
