@@ -23,6 +23,7 @@ from ..schemas.dto import canonical_source_event_id  # re-export used by tests
 from . import assignments as assignment_service
 from . import members as member_service
 from . import registration as device_service
+from . import usage as usage_routes
 from .assignments import AssignmentConflict
 from .context import ServerContext, TenantViolation
 from .schemas import (
@@ -139,6 +140,10 @@ def create_app(db_path=None, context: ServerContext | None = None) -> FastAPI:
             # top-level 409 handler below.
             raise
 
+    # Usage routes must be added BEFORE include_router: FastAPI snapshots
+    # the router's route list at include time (P0 routes are declared on
+    # the local `router` above, usage routes append to the same router).
+    usage_routes.add_usage_routes(app, router, db, ctx)
     app.include_router(router)
 
     # unified error shapes, never leak tracebacks

@@ -19,12 +19,16 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 # hk1:<32 hex> — the ONLY accepted fingerprint shape. Raw hostname /
 # username / IP can never enter through the API; hashing happens on the
 # trusted collector side, never at this boundary.
 _HK1_RE = re.compile(r"^hk1:[0-9a-f]{32}$")
+
+# The canonical collector wire shape (P1A-02). The batch envelope and the
+# usage routes reuse it verbatim: claims, never server models.
+from ..schemas.usage import UsageEventClaim  # noqa: E402
 
 # Forbidden in ANY registration payload — either authority the client must
 # not claim, or raw evidence the protocol must never see.
@@ -207,3 +211,69 @@ class AssignmentResponse(BaseModel):
     valid_to: Optional[str]
     reason: Optional[str]
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# P1A-07 Usage events (HTTP projection of the P1A-03 ingest domain)
+# ---------------------------------------------------------------------------
+
+class UsageEventResponse(BaseModel):
+    """One usage event, projected for its OWN organization. No raw content
+    exists anywhere in usage_events; money fields are server-owned and
+    NULL until the (out-of-scope) pricing slice runs."""
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    organization_id: str
+    device_id: str
+    device_uid: str
+    member_id: Optional[str]
+    provider: str
+    provider_account_ref: Optional[str]
+    model: str
+    session_ref: str
+    source_event_id: str
+    started_at: str
+    ended_at: str
+    received_at: str
+    input_tokens: int
+    cached_input_tokens: int
+    cache_write_tokens: int
+    output_tokens: int
+    reasoning_tokens: int
+    request_count: int
+    pricing_version: Optional[str]
+    api_equivalent_cost_usd: Optional[str]
+    source_type: str
+    collector_version: str
+    created_at: str
+
+
+class UsageBatchItemResult(BaseModel):
+    """Per-item batch outcome: created | duplicate | rejected."""
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    event_id: Optional[str] = None
+    detail: Optional[str] = None
+
+
+class UsageBatchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results: list[UsageBatchItemResult]
+
+
+class UsageEventBatchRequest(BaseModel):
+    """Batch envelope, enforced at the HTTP edge BEFORE any write:
+    extra top-level keys, non-claim items, or more than 500 events are a
+    whole-request 422 with zero writes (spec section 6.2)."""
+    model_config = ConfigDict(extra="forbid")
+
+    events: list[UsageEventClaim]
+
+    @model_validator(mode="after")
+    def _cap_size(self) -> "UsageEventBatchRequest":
+        if len(self.events) > 500:
+            raise ValueError("batch exceeds 500 events")
+        return self
