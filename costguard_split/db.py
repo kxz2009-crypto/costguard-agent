@@ -26,18 +26,22 @@ def split_db_path(home: Path | str | None = None) -> Path:
 
 
 def connect(path: Path | str | None = None,
-            home: Path | str | None = None) -> sqlite3.Connection:
+            home: Path | str | None = None,
+            check_same_thread: bool = True) -> sqlite3.Connection:
     """Open (creating if needed) the Split DB with 0600 perms + migrations.
 
     Precedence: explicit `path` beats everything; otherwise the DB lives at
     split_db_path(home) under the one resolved CostGuard home.
+
+    check_same_thread=False is for long-lived server connections shared
+    across worker threads (FastAPI); local CLI usage keeps the default.
     """
     p = Path(path).expanduser() if path else split_db_path(home)
     p.parent.mkdir(parents=True, exist_ok=True)
     if not p.exists():
         p.touch(mode=0o600)
     os.chmod(p, 0o600)  # enforce even if it pre-existed
-    db = sqlite3.connect(p)
+    db = sqlite3.connect(p, check_same_thread=check_same_thread)
     db.execute("PRAGMA foreign_keys = ON")
     apply_migrations(db)
     return db
