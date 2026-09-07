@@ -293,3 +293,30 @@ Requires:
 - implementation plan
 - file boundary approval
 - test plan approval
+
+
+# Trend Endpoint Status
+
+
+Deferred.
+
+
+Reason:
+
+
+Current analytics read model provides dimensional aggregation only.
+
+
+It does not provide time-series aggregation required by usage trend visualization.
+
+
+No workaround is permitted in visualization API layer.
+
+
+A dedicated time-series analytics read model is required before enabling:
+
+
+- daily trend endpoint
+- interval aggregation
+- historical usage charts
+
