@@ -583,7 +583,7 @@ class MigrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             db = sqlite3.connect(Path(td) / "fresh.db")
             applied = schemas.apply_migrations(db)
-            self.assertEqual(applied, 2)
+            self.assertEqual(applied, 3)
             tables = {r[0] for r in db.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertLessEqual(
@@ -596,7 +596,7 @@ class MigrationTests(unittest.TestCase):
             db = sqlite3.connect(Path(td) / "old.db")
             self._build_v1(db)
             applied = schemas.apply_migrations(db)
-            self.assertEqual(applied, 1)
+            self.assertEqual(applied, 2)
             # member survived
             self.assertEqual(
                 db.execute("SELECT display_name FROM members WHERE"

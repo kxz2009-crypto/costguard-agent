@@ -3,7 +3,7 @@
 Migration history:
   v1  initial P0 (commit 96facac): organizations/members/devices/
       audit_events; devices.status CHECK included 'unassigned'.
-  v2  hardening (this release):
+  v2  P0 hardening:
       - PATCH 4: tenant-safe composite FKs — members/devices/
         device_assignments/audit_events all carry
         UNIQUE(organization_id, id) and children reference parents via
@@ -22,6 +22,11 @@ Migration history:
         is then dropped (SQLite 3.35+ ALTER TABLE DROP COLUMN).
       - PATCH 9: type policy guard data — no REAL/FLOAT money columns
         exist; a test scans this file to keep it that way.
+  v3  P1A Usage Event Schema v1:
+      - usage_events with five explicit token classes;
+      - tenant-safe device/member composite foreign keys;
+      - source_event_id-based idempotency identity;
+      - nullable TEXT money fields for later server-side Decimal values.
 
 PostgreSQL mapping notes (no behavior in SQLite): ids TEXT->TEXT/UUID,
 timestamps TEXT->TIMESTAMPTZ, before_json/after_json TEXT->JSONB,
@@ -252,6 +257,53 @@ FROM devices""")
                " ON devices(organization_id)")
 
 
+def _migrate_v3(db) -> None:
+    """Create P1A Usage Event Schema v1 after P0 composite keys exist."""
+    db.executescript("""
+CREATE TABLE IF NOT EXISTS usage_events (
+    id                      TEXT PRIMARY KEY,
+    organization_id         TEXT NOT NULL,
+    device_id               TEXT NOT NULL,
+    device_uid              TEXT NOT NULL,
+    member_id               TEXT,
+    provider                TEXT NOT NULL,
+    provider_account_ref    TEXT,
+    model                   TEXT NOT NULL,
+    session_ref             TEXT NOT NULL,
+    source_event_id         TEXT NOT NULL,
+    started_at              TEXT NOT NULL,
+    ended_at                TEXT NOT NULL,
+    received_at             TEXT NOT NULL,
+    input_tokens            INTEGER NOT NULL DEFAULT 0,
+    cached_input_tokens     INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens      INTEGER NOT NULL DEFAULT 0,
+    output_tokens           INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens        INTEGER NOT NULL DEFAULT 0,
+    request_count           INTEGER NOT NULL DEFAULT 1,
+    pricing_version         TEXT,
+    api_equivalent_cost_usd TEXT,
+    source_type             TEXT NOT NULL DEFAULT 'connector',
+    collector_version       TEXT NOT NULL DEFAULT '',
+    created_at              TEXT NOT NULL,
+    UNIQUE (organization_id, id),
+    UNIQUE (organization_id, device_uid, provider, source_event_id),
+    FOREIGN KEY (organization_id, device_id)
+        REFERENCES devices (organization_id, id),
+    FOREIGN KEY (organization_id, member_id)
+        REFERENCES members (organization_id, id),
+    CHECK (input_tokens >= 0 AND cached_input_tokens >= 0 AND
+           cache_write_tokens >= 0 AND output_tokens >= 0 AND
+           reasoning_tokens >= 0 AND request_count >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_org_time
+    ON usage_events(organization_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_usage_device_time
+    ON usage_events(device_id, started_at);
+CREATE INDEX IF NOT EXISTS idx_usage_member_time
+    ON usage_events(member_id, started_at);
+""")
+
+
 def _index_exists(db, name: str) -> bool:
     return db.execute(
         "SELECT 1 FROM sqlite_master WHERE type='index' AND name=?",
@@ -285,17 +337,26 @@ def apply_migrations(db) -> int:
         mark(2)
         applied += 1
 
-    # PATCH 9 guard rail: monetary columns must never be REAL/FLOAT.
-    bad = [r for r in db.execute(
-        "SELECT name, type FROM sqlite_master WHERE type='table'")]
-    for table, _ in bad:
+    if current < 3:
+        _migrate_v3(db)
+        mark(3)
+        applied += 1
+
+    # Numeric policy guard: monetary columns must never use a binary
+    # floating-point storage type.
+    money_hints = ("cost", "price", "allocation", "settlement", "amount",
+                   "balance")
+    forbidden_types = ("REAL", "FLOAT", "DOUBLE")
+    tables = [r[0] for r in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+        " AND name NOT LIKE 'sqlite_%'")]
+    for table in tables:
         for col in db.execute(f"PRAGMA table_info({table})"):
-            if "REAL" in (col[2] or "").upper() and _MONEY_HINT in col[1]:
+            name, declared = col[1].lower(), (col[2] or "").upper()
+            if (any(hint in name for hint in money_hints)
+                    and any(kind in declared for kind in forbidden_types)):
                 raise RuntimeError(
-                    f"monetary column {table}.{col[1]} is REAL — Decimal/"
-                    f"NUMERIC policy violated")
+                    f"monetary column {table}.{col[1]} is {declared} — "
+                    "Decimal/NUMERIC policy violated")
     db.commit()
     return applied
-
-
-_MONEY_HINT = "cost"  # extended later: price/allocation/settlement
