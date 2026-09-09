@@ -14,7 +14,7 @@ Rules:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, Response
 from fastapi.datastructures import FormData
@@ -85,7 +85,7 @@ def _validate_window(start: str, end: str) -> tuple[str, str]:
     if start_dt >= end_dt:
         raise _bad_request("invalid window: start must precede end")
 
-    if (end_dt - start_dt).days > MAX_WINDOW_DAYS:
+    if (end_dt - start_dt) > timedelta(days=MAX_WINDOW_DAYS):
         raise _bad_request(
             f"invalid window: exceeds {MAX_WINDOW_DAYS} days")
 

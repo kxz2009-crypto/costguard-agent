@@ -350,6 +350,27 @@ class IsolationAndAuthzTests(ConsumptionTestBase):
 class ValidationTests(ConsumptionTestBase):
     """K12, K15, K16: input validation contract."""
 
+    def test_k12_exactly_31_days_accepted(self):
+        for path, params in IsolationAndAuthzTests.DATA_ENDPOINTS:
+            with self.subTest(path=path):
+                response = self.get(path, end="2026-02-01T00:00:00Z", **params)
+                self.assertEqual(response.status_code, 200)
+
+    def test_k12_31_days_plus_fraction_rejected(self):
+        for end in ("2026-02-01T00:00:01Z", "2026-02-01T00:00:00.000001Z"):
+            for path, params in IsolationAndAuthzTests.DATA_ENDPOINTS:
+                with self.subTest(path=path, end=end):
+                    response = self.get(path, end=end, **params)
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(response.json(), {
+                        "detail": "invalid window: exceeds 31 days"})
+
+    def test_k12_32_days_rejected(self):
+        for path, params in IsolationAndAuthzTests.DATA_ENDPOINTS:
+            with self.subTest(path=path):
+                response = self.get(path, end="2026-02-02T00:00:00Z", **params)
+                self.assertEqual(response.status_code, 400)
+
     def test_k12_window_validation(self):
         cases = [
             # malformed
