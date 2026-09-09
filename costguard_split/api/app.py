@@ -15,6 +15,8 @@ Error contract (P0 unified minimum):
 
 from __future__ import annotations
 
+import sqlite3
+
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 
 from ..db import connect as connect_db
@@ -26,6 +28,7 @@ from . import registration as device_service
 from . import usage as usage_routes
 from . import visualization as visualization_routes
 from . import trend_visualization as trend_visualization_routes
+from . import consumption as consumption_routes
 from .assignments import AssignmentConflict
 from .context import ServerContext, TenantViolation
 from .schemas import (
@@ -51,6 +54,10 @@ def create_app(db_path=None, context: ServerContext | None = None) -> FastAPI:
     app = FastAPI(title="CostGuard Split API", version="0.1.0",
                   docs_url=None, redoc_url=None)   # public repo: minimal surface
     db = connect_db(path=db_path, check_same_thread=False)
+    # Server-side connections use Row access: analytics/visualization
+    # read services (P1B/P1C) index columns as r["column"]. Scoped here
+    # so local CLI connections keep positional-tuple semantics.
+    db.row_factory = sqlite3.Row
     ctx = context
     router = APIRouter(prefix="/api/v1")
 
@@ -157,6 +164,15 @@ def create_app(db_path=None, context: ServerContext | None = None) -> FastAPI:
 
     # P1C-02 trend visualization HTTP adapter
     trend_visualization_routes.add_trend_visualization_routes(
+        app,
+        router,
+        db,
+        ctx,
+    )
+
+    # P1D-04 open consumption API adapter (versioned read-only
+    # surface; installs its own namespace no-store policy)
+    consumption_routes.add_consumption_routes(
         app,
         router,
         db,

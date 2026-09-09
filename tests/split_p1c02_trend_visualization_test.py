@@ -102,6 +102,7 @@ class TrendVisualizationTest(unittest.TestCase):
 
         # replace internal db dependency for test
         import costguard_split.api.app as api_app
+        self._orig_connect_db = api_app.connect_db
         api_app.connect_db = lambda *a, **k: self.db
 
         self.app = create_app(
@@ -114,6 +115,11 @@ class TrendVisualizationTest(unittest.TestCase):
 
 
     def tearDown(self):
+        # restore the module-level connect_db so later test modules
+        # build real apps (leaking this patch would hand every later
+        # create_app() this closed in-memory db)
+        import costguard_split.api.app as api_app
+        api_app.connect_db = self._orig_connect_db
         self.db.close()
 
 
