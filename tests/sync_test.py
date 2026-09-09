@@ -21,6 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests.legacy_usage_fixture import synthetic_usage
+
 from costguard_agent import device, export as export_mod, sync as sync_mod
 
 
@@ -28,7 +30,8 @@ class SyncPrepTest(unittest.TestCase):
     # ---- fixtures -------------------------------------------------------
     @classmethod
     def setUpClass(cls):
-        cls.export_payload = export_mod.build_export_payload()
+        with synthetic_usage():
+            cls.export_payload = export_mod.build_export_payload()
         cls.device_id = device.get_or_create()
         cls.dto = sync_mod.to_ingest_dto(cls.export_payload, cls.device_id,
                                          created_at="2026-09-04T00:00:00+00:00")
@@ -149,7 +152,8 @@ class SyncPrepTest(unittest.TestCase):
 
         socket.socket = Blocked
         try:
-            payload = export_mod.build_export_payload()
+            with synthetic_usage():
+                payload = export_mod.build_export_payload()
             dto = sync_mod.to_ingest_dto(payload, self.device_id)
             self.assertTrue(dto["records"])
         finally:

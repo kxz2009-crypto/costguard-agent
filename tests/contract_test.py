@@ -103,7 +103,11 @@ def test_t3_machine_report_shape() -> None:
 
 def test_t3_export_payload_privacy() -> None:
     from costguard_agent import export as export_mod
-    payload = export_mod.build_export_payload()
+    from tests.legacy_usage_fixture import synthetic_usage
+    with synthetic_usage():
+        payload = export_mod.build_export_payload()
+    check("T3 export synthetic usage present",
+          payload["days"] == 1 and payload["usage"]["2026-09-04"]["events"] == 2)
     try:
         export_mod.assert_no_forbidden_payload(payload)
         check("T3 export payload has no forbidden keys", True)

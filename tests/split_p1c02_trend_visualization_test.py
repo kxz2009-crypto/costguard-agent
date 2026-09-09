@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -32,7 +33,19 @@ class TrendVisualizationTest(unittest.TestCase):
             ":memory:",
             check_same_thread=False,
         )
+        self.addCleanup(self.db.close)
         self.db.row_factory = sqlite3.Row
+
+        self.db.execute("""
+        CREATE TABLE organizations (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'disabled')),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """)
 
         self.db.execute("""
         CREATE TABLE usage_events (
@@ -94,16 +107,12 @@ class TrendVisualizationTest(unittest.TestCase):
             ],
         )
 
-        self.app = create_app(
-            context=ServerContext(
-                organization_id="org-a"
-            )
+        # Register restoration before bootstrap, which can fail during setUp.
+        connection_patch = patch(
+            "costguard_split.api.app.connect_db", return_value=self.db
         )
-
-        # replace internal db dependency for test
-        import costguard_split.api.app as api_app
-        self._orig_connect_db = api_app.connect_db
-        api_app.connect_db = lambda *a, **k: self.db
+        self.addCleanup(connection_patch.stop)
+        connection_patch.start()
 
         self.app = create_app(
             context=ServerContext(
@@ -112,15 +121,7 @@ class TrendVisualizationTest(unittest.TestCase):
         )
 
         self.client = TestClient(self.app)
-
-
-    def tearDown(self):
-        # restore the module-level connect_db so later test modules
-        # build real apps (leaking this patch would hand every later
-        # create_app() this closed in-memory db)
-        import costguard_split.api.app as api_app
-        api_app.connect_db = self._orig_connect_db
-        self.db.close()
+        self.addCleanup(self.client.close)
 
 
     def test_v1_returns_dto_shape(self):
@@ -270,6 +271,25 @@ class TrendVisualizationTest(unittest.TestCase):
             "allocation",
         ]:
             self.assertNotIn(word, text)
+
+
+class TrendFixtureCleanupTest(unittest.TestCase):
+    def test_connect_db_restored_when_setup_fails(self):
+        import costguard_split.api.app as api_app
+
+        original = api_app.connect_db
+        case = TrendVisualizationTest("test_v1_returns_dto_shape")
+        with patch(
+            f"{__name__}.create_app",
+            side_effect=RuntimeError("injected bootstrap failure"),
+        ):
+            result = unittest.TestResult()
+            case.run(result)
+        self.assertEqual(len(result.errors), 1)
+        self.assertIn("injected bootstrap failure", result.errors[0][1])
+        self.assertIs(api_app.connect_db, original)
+        with self.assertRaises(sqlite3.ProgrammingError):
+            case.db.execute("SELECT 1")
 
 
 if __name__ == "__main__":
