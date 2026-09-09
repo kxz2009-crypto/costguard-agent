@@ -16,6 +16,7 @@ Error contract (P0 unified minimum):
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 
@@ -59,6 +60,17 @@ def create_app(db_path=None, context: ServerContext | None = None) -> FastAPI:
     # so local CLI connections keep positional-tuple semantics.
     db.row_factory = sqlite3.Row
     ctx = context
+    # Single-org P0 server: the context's organization row MUST exist
+    # before any business write (devices/members FK to organizations).
+    # Idempotent bootstrap — the server is the only authorized writer
+    # of its own org row.
+    if ctx is not None:
+        now = datetime.now(timezone.utc).isoformat()
+        db.execute(
+            "INSERT OR IGNORE INTO organizations (id, name, status,"
+            " created_at, updated_at) VALUES (?,?, 'active',?,?)",
+            (ctx.organization_id, ctx.organization_id, now, now))
+        db.commit()
     router = APIRouter(prefix="/api/v1")
 
     @app.get("/healthz")
