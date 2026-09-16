@@ -26,6 +26,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# Split claims/connectors require Pydantic; the legacy CLI remains stdlib-only.
+split = ["pydantic>=2.5"]
 # Server-side Split API (P0-04/05/06). Core package stays stdlib-only;
 # these extras are only needed to RUN or TEST the HTTP layer.
 split-server = ["fastapi>=0.110", "pydantic>=2.5", "httpx>=0.27"]
@@ -34,7 +36,9 @@ split-server = ["fastapi>=0.110", "pydantic>=2.5", "httpx>=0.27"]
 costguard = "costguard_agent.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["costguard_agent*"]
+include = ["costguard_agent*", "costguard_split*"]
 
 [tool.setuptools.package-data]
 "costguard_agent.data" = ["*.json"]
+
+"costguard_split" = ["data/*.json"]

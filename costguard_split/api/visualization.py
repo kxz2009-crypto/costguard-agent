@@ -22,12 +22,11 @@ from ..visualization.service import (
 
 
 def _check_org(context, org_id: str):
-    if context is not None:
-        if org_id != context.organization_id:
-            raise HTTPException(
-                status_code=404,
-                detail="not found",
-            )
+    if context is None or org_id != context.organization_id:
+        raise HTTPException(
+            status_code=404,
+            detail="not found",
+        )
 
 
 def add_visualization_routes(app, router, db, context):

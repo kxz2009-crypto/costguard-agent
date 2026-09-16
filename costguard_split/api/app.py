@@ -32,6 +32,7 @@ from . import trend_visualization as trend_visualization_routes
 from . import consumption as consumption_routes
 from .assignments import AssignmentConflict
 from .context import ServerContext, TenantViolation
+from .request_scope import RequestScope
 from .schemas import (
     AssignmentCreateRequest, AssignmentResponse,
     DeviceRegisterRequest, DeviceResponse,
@@ -59,6 +60,7 @@ def create_app(db_path=None, context: ServerContext | None = None) -> FastAPI:
     # read services (P1B/P1C) index columns as r["column"]. Scoped here
     # so local CLI connections keep positional-tuple semantics.
     db.row_factory = sqlite3.Row
+    app.add_middleware(RequestScope, db=db)
     ctx = context
     # Single-org P0 server: the context's organization row MUST exist
     # before any business write (devices/members FK to organizations).

@@ -18,12 +18,11 @@ from ..analytics.timeseries import timeseries_summary
 
 
 def _check_org(context, org_id: str):
-    if context is not None:
-        if org_id != context.organization_id:
-            raise HTTPException(
-                status_code=404,
-                detail="not found",
-            )
+    if context is None or org_id != context.organization_id:
+        raise HTTPException(
+            status_code=404,
+            detail="not found",
+        )
 
 
 def add_trend_visualization_routes(

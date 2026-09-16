@@ -8,8 +8,7 @@ Rules:
 - no aggregation
 - no cost calculation
 - no intelligence layer
-- stricter tenant guard than legacy visualization adapters:
-  a missing (None) ServerContext is a 404, never a bypass
+- tenant guard: a missing (None) ServerContext is a 404, never a bypass
 """
 
 from __future__ import annotations
@@ -21,6 +20,8 @@ from fastapi.datastructures import FormData
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from ..analytics.service import analytics_summary
+from ..analytics.token_semantics import token_semantics_summary
+from ..analytics.token_analysis import token_analysis
 from ..analytics.timeseries import timeseries_summary
 from ..dashboard.service import dashboard_projection
 from ..export.service import (
@@ -51,8 +52,8 @@ def _bad_request(message: str) -> HTTPException:
 def _require_context(context, org_id: str) -> None:
     """Stricter tenant guard for consumption routes.
 
-    Unlike the legacy visualization _check_org, a None context is
-    a hard 404. Client input can never create or select context.
+    A None context is a hard 404, as in the visualization adapters.
+    Client input can never create or select context.
     """
     if context is None:
         raise _not_found()
@@ -170,6 +171,34 @@ def add_consumption_routes(app, router, db, context):
         )
         from dataclasses import asdict
         return asdict(summary)
+
+    @router.get("/consumption/token-semantics")
+    def consumption_token_semantics_api(
+        org_id: str,
+        start: str,
+        end: str,
+        provider: str | None = None,
+        model: str | None = None,
+        member_id: str | None = None,
+        device_id: str | None = None,
+    ):
+        _require_context(context, org_id)
+        norm_start, norm_end = _validate_window(start, end)
+        return token_semantics_summary(
+            db, org_id, norm_start, norm_end, provider=provider,
+            model=model, member_id=member_id, device_id=device_id,
+        )
+
+    @router.get("/consumption/token-analysis")
+    def consumption_token_analysis_api(
+        org_id: str, start: str, end: str,
+        provider: str | None = None, model: str | None = None,
+        member_id: str | None = None, device_id: str | None = None,
+    ):
+        _require_context(context, org_id)
+        norm_start, norm_end = _validate_window(start, end)
+        return token_analysis(db, org_id, norm_start, norm_end, provider=provider,
+                              model=model, member_id=member_id, device_id=device_id)
 
     @router.get("/consumption/timeseries")
     def consumption_timeseries_api(
