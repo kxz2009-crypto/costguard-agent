@@ -1,5 +1,22 @@
 # CostGuard Split Roadmap v0.1
 
+## Current status — 2026-09-13
+
+P0 through P1D-04 are complete, frozen at `v0.8.0-p1d04-final`.
+P1E-01 revision B is owner-authorized as an installable offline HTML renderer.
+Implementation and local validation are complete (340 pytest passes, 2 skips;
+18 contract passes, 2 skips; wheel/sdist installed-renderer checks pass).
+Independent bridge review 3520a0245b4b475b868bd107e5e27c24 passed after cloud-debug
+transaction fixes (343 pytest passes / 2 skips). Owner acceptance and actual
+cloud deployment verification remain pending; no release is implied.
+
+Local delivery hardening packages Split and its pricing data and rejects
+missing server context on legacy visualization routes. See
+`docs/gates/DELIVERY_HARDENING_FOLLOWUP.md`. Changes are uncommitted and do not
+constitute a release or production authentication acceptance.
+
+The milestone descriptions below preserve the original roadmap.
+
 
 # Development Philosophy
 
