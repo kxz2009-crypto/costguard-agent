@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  portable-gate:
+    name: portable-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-ci.txt
+
+      - name: Install pinned CI dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check -r requirements-ci.txt
+          .venv/bin/python -m pip install --disable-pip-version-check --no-deps --no-build-isolation -e '.[split-server]'
+          .venv/bin/python -m pip check
+
+      - name: Run portable test and connector contracts
+        run: scripts/run_tests.sh
+
+      - name: Build wheel and source distribution
+        run: .venv/bin/python -m build --no-isolation
+
+      - name: Verify wheel installation
+        run: |
+          mkdir -p .ci-install/wheel
+          .venv/bin/python -m pip install --disable-pip-version-check --no-deps --target .ci-install/wheel dist/*.whl
+          .venv/bin/python -I scripts/verify_split_install.py .ci-install/wheel --server
+
+      - name: Rebuild and verify wheel from source distribution
+        run: |
+          mkdir -p .ci-install/sdist-wheel .ci-install/sdist
+          .venv/bin/python -m pip wheel --disable-pip-version-check --no-deps --no-build-isolation --wheel-dir .ci-install/sdist-wheel dist/*.tar.gz
+          .venv/bin/python -m pip install --disable-pip-version-check --no-deps --target .ci-install/sdist .ci-install/sdist-wheel/*.whl
+          .venv/bin/python -I scripts/verify_split_install.py .ci-install/sdist --server
