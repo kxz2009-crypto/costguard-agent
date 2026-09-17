@@ -13,6 +13,11 @@ venv/
 *.db
 *.sqlite*
 
+# Secrets / credentials (defense-in-depth; secrets belong outside git)
+.env
+device.json
+split_fingerprint_key
+
 # Tooling
 .pytest_cache/
 .mypy_cache/

@@ -11,6 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tests.legacy_usage_fixture import synthetic_usage
+
 from costguard_agent.pricing import PriceTable, cost_usd, UNPRICED
 
 
@@ -51,14 +53,17 @@ class PricingTest(unittest.TestCase):
 
     def test_report_cost_section_integration(self):
         from costguard_agent.reports import build_report
-        rep = build_report()
-        if rep["total_tokens"] == 0:
-            self.skipTest("no local data")
+        with synthetic_usage():
+            rep = build_report()
+        self.assertEqual(rep["total_tokens"], 2_000_030)
         c = rep["cost"]
         self.assertIn("local_estimate", c)
         self.assertIn("price_table_version", c)
         # unknown models are listed, never silently $0
         self.assertIsInstance(c["unpriced_models"], list)
+        self.assertEqual(c["unpriced_models"], ["synthetic-unpriced"])
+        self.assertEqual(c["local_estimate"], 11.25)
+        self.assertEqual(c["unknown_events"], 2)
 
 
 class HtmlReportTest(unittest.TestCase):
@@ -66,7 +71,8 @@ class HtmlReportTest(unittest.TestCase):
     def setUpClass(cls):
         from costguard_agent.reports import build_report
         from costguard_agent.html_report import render_html
-        cls.rep = build_report()
+        with synthetic_usage():
+            cls.rep = build_report()
         cls.html = render_html(cls.rep, generated_at="2026-09-05T00:00:00+00:00")
 
     def test_contains_all_sections(self):
@@ -94,9 +100,9 @@ class HtmlReportTest(unittest.TestCase):
 
     def test_unknown_never_zero_display(self):
         # when there are unpriced models, page says unknown explicitly
-        if self.rep.get("cost", {}).get("unknown_events", 0) > 0:
-            self.assertIn("unknown", self.html)
-            self.assertIn("never counted", self.html)
+        self.assertEqual(self.rep["cost"]["unknown_events"], 2)
+        self.assertIn("unknown", self.html)
+        self.assertIn("never counted", self.html)
 
 
 class PackagingTest(unittest.TestCase):
