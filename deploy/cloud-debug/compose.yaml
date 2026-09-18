@@ -1,0 +1,39 @@
+services:
+  backend:
+    build:
+      context: ../..
+      dockerfile: deploy/cloud-debug/Dockerfile
+    image: costguard-split-cloud-debug:local
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:8080"
+    environment:
+      COSTGUARD_SPLIT_DB_PATH: /data/split.db
+      COSTGUARD_SPLIT_ORGANIZATION_ID: org-cloud-debug-synthetic
+      COSTGUARD_SPLIT_ACTOR_ID: actor-cloud-debug-synthetic
+    volumes:
+      - split_cloud_debug_data:/data
+    networks:
+      - backend_private
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2).read()"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
+
+networks:
+  backend_private:
+    internal: true
+
+volumes:
+  split_cloud_debug_data:
+    name: costguard_split_cloud_debug_data
