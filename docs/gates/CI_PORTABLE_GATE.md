@@ -22,8 +22,13 @@ distribution, and verifies that installation with the Split server extras.
 Failures in any command fail the job. Existing environmental skips remain
 visible: connector contract checks that require installed, real Hermes or Codex
 sources skip under the isolated home, and tests that explicitly require Git
-metadata run because Actions checks out the repository. Existing dependency
-deprecation warnings are not filtered or converted into passes.
+metadata run because Actions checks out the repository. Dependency warnings
+remain visible and are not suppressed. HTTPX2 is pinned only in the CI/test
+stack for Starlette TestClient verification; it is not a public Split server
+runtime dependency. AnyIO 4.14.2 is temporarily pinned only in CI because
+Starlette 1.6.0 references the deprecated `anyio.abc.BlockingPortal` alias.
+Revisit and remove that pin when Starlette uses
+`anyio.from_thread.BlockingPortal` or otherwise resolves the warning.
 
 ## Known gaps
 
